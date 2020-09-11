@@ -24,7 +24,7 @@ module barret_mod #(
   parameter                CTL_BITS = 8,
   parameter                IN_BITS = 512,
   parameter [OUT_BITS-1:0] P = 256'hFFFFFFFF_FFFFFFFF_FFFFFFFF_FFFFFFFE_BAAEDCE6_AF48A03B_BFD25E8C_D0364141,
-  parameter                K = $clog2(P),
+  parameter                K = OUT_BITS,
   parameter                MULTIPLIER = "EXTERNAL" // [ACCUM_MULT || KARATSUBA || EXTERNAL]
 )(
   input                       i_clk,
@@ -43,14 +43,18 @@ module barret_mod #(
 
 localparam                   MAX_IN_BITS = 2*K;
 localparam [MAX_IN_BITS:0]   U = (1 << (2*K)) / P;
-localparam [MAX_IN_BITS-1:0] P_ = P;
 logic [2:0][CTL_BITS-1:0] ctl_r;
 
 if_axi_stream #(.DAT_BITS(2*(OUT_BITS+2))) mult_in_if(i_clk);
 if_axi_stream #(.DAT_BITS(2*(OUT_BITS+2))) mult_out_if(i_clk);
 
-logic [MAX_IN_BITS:0] c1, c2, c3, c4, c2_;
+logic [MAX_IN_BITS:0] c1, c2, c3, c4, P_;
+logic c4_grt;
 
+always_comb begin
+  P_ = {{(MAX_IN_BITS-OUT_BITS-1){1'b0}}, P}; 
+  c4_grt  = c4 >= P_;
+end
 
 typedef enum {IDLE, S0, S1, S2, FINISHED, WAIT_MULT} state_t;
 state_t state, prev_state;
@@ -85,7 +89,6 @@ always_ff @ (posedge i_clk) begin
           mult_in_if.dat[0 +: OUT_BITS+1] <= i_dat >> (K-1);
           mult_in_if.dat[OUT_BITS+1 +: OUT_BITS+1] <= U;
           prev_state <= S0;
-          c2_ <= (i_dat >> (K - 1))*U; // Using multiplier interface
         end
       end
       {S0}: begin
@@ -102,8 +105,9 @@ always_ff @ (posedge i_clk) begin
         ctl_r[2] <= ctl_r[1];
       end
       {S2}: begin
-        if (c4 >= P_) begin
+        if (c4_grt) begin
           c4 <= c4 - P_;
+          state <= S2;
         end else begin
           state <= FINISHED;
           o_dat <= c4;
@@ -125,8 +129,13 @@ always_ff @ (posedge i_clk) begin
           case(prev_state)
             S0: c2 <= mult_out_if.dat;
             S2: c4 <= c4 - mult_out_if.dat;
+            default: begin end     
           endcase
         end
+      end
+      default: begin
+        o_val <= 0;
+        state <= IDLE;
       end
     endcase
   end
@@ -153,7 +162,6 @@ generate
     );
   end else if (MULTIPLIER == "KARATSUBA") begin
     localparam LEVEL = 2;
-    logic [LEVEL-1:0] val;
     
     karatsuba_ofman_mult # (
       .BITS  ( OUT_BITS + 8 ),
@@ -161,23 +169,23 @@ generate
     )
     karatsuba_ofman_mult (
       .i_clk  ( i_clk                 ),
+      .i_rst ( i_rst),
+      .i_val ( mult_in_if.val ),
+      .i_ctl (),
+      .i_rdy( mult_out_if.rdy ),
+      .o_rdy (mult_in_if.rdy),
+      .o_val(mult_out_if.val),
       .i_dat_a( {7'd0, mult_in_if.dat[0 +: OUT_BITS+1]}),
       .i_dat_b( {7'd0, mult_in_if.dat[OUT_BITS+1 +: OUT_BITS+1]} ),  
       .o_dat  ( mult_out_if.dat       )
     );
     
-    always_comb begin
-      mult_in_if.rdy = mult_out_if.rdy;
-      mult_out_if.val = val[LEVEL-1];
+  always_comb begin
+    o_mult_if.val = 0;
+    i_mult_if.rdy = 0;
     end
-    
-    always_ff @ (posedge i_clk) begin
-      if (i_rst) begin
-        val <= 0;
-      end else begin
-        val <= {val, mult_in_if.val};
-      end  
-    end
+
+  
   end else if (MULTIPLIER == "EXTERNAL") begin
     always_comb begin
       o_mult_if.val = mult_in_if.val;
