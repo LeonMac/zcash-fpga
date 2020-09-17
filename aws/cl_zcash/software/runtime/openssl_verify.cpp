@@ -33,6 +33,8 @@
 #include <unistd.h>
 #include <stdlib.h>
 
+
+#include <chrono>
 #include <fpga_pci.h>
 #include <fpga_mgmt.h>
 #include <utils/lcd.h>
@@ -44,6 +46,7 @@
 #include <openssl/ecdsa.h>
 #include <openssl/sha.h>
 #include <openssl/bn.h>
+
 
 #define MAX_TEST_ITER 10000
 
@@ -88,9 +91,12 @@ int main(int argc, char *argv[]) {
 
     // Test the secp256k1 core
 
+      uint32_t cycle_count_sum=0;
+      double compute_time_ms=0;
     if ((zfpga.m_command_cap & zcash_fpga::ENB_VERIFY_SECP256K1_SIG) != 0) {
       printf("INFO: Testing secp256k1 core...\n");
       const unsigned int index_int=0xa;
+      auto cpu_start = std::chrono::steady_clock::now();
 
       for (unsigned int tv_ind=0; tv_ind<iter; tv_ind++) {
       std::cout<<"Openssl to generate a dynamic TV #" << tv_ind <<"\n";
@@ -151,6 +157,7 @@ int main(int argc, char *argv[]) {
       printf("[INFO]: .index    = 0x%lx, \t expect 0x%x\n", verify_secp256k1_sig_rpl.index,index_int+tv_ind);
       printf("[INFO]: .cycle_cnt= 0x%x\n", verify_secp256k1_sig_rpl.cycle_cnt);
       */
+      cycle_count_sum+=verify_secp256k1_sig_rpl.cycle_cnt;
       if (verify_secp256k1_sig_rpl.hdr.cmd != zcash_fpga::VERIFY_SECP256K1_SIG_RPL) {
           printf("[ERROR]: Header type was wrong for test vector#%d!\n",tv_ind);
           failed++;
@@ -172,11 +179,17 @@ int main(int argc, char *argv[]) {
 	 continue;
       }
       }//end of tv_ind loop
+      auto cpu_end = std::chrono::steady_clock::now();
+      std::chrono::duration<double> acc_compute_t = cpu_end-cpu_start;
+      compute_time_ms=(acc_compute_t.count())*1000;
     }
 
+
     printf("\n======================================================\n");    
-printf("Final result\n");
-printf("Total [%d] round test, failed [%d]\n", iter, failed);
+    printf("Final result:\n");
+    printf("Total [%d] round test, failed [%d]\n", iter, failed);
+    printf("Average cycle count  = 0x%08x, 0d%08d \n", cycle_count_sum/iter, cycle_count_sum/iter);
+    printf("Total consume timing = %8.3f ms, average %8.2f kop/s\n",compute_time_ms,iter/compute_time_ms);
  out:
     return 1;
 }
