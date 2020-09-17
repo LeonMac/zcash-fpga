@@ -72,8 +72,10 @@ Signature_t sig_ossl (bool verb)        {       //verb=true, print more info.
         //fill sig_ret.hash.
         unsigned char* p_hash = (unsigned char *)sig_ret.hash;
         int i=0;
-        for     (std::vector<unsigned char>::iterator iter = Digest.begin(); iter != Digest.end(); ++iter)
-        {       *(p_hash+i) =*iter; i++;        }
+        //for     (std::vector<unsigned char>::iterator iter = Digest.begin(); iter != Digest.end(); ++iter)
+        //{       *(p_hash+i) =*iter; i++;        }
+	for	(std::vector<unsigned char>::iterator iter = Digest.end(); iter != Digest.begin(); iter--)	//make hash LE
+	{	*(p_hash+i) =*(iter-1); i++;	}	
 
         //EC_KEY OBJ create
         EC_KEY *ec_key = EC_KEY_new();
